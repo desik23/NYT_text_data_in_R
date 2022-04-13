@@ -1,0 +1,196 @@
+---
+title: "NY Times Text Data in R"
+author: "Desik Somasundaram"
+date: "4/6/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(jsonlite) #convert results from API queries into R-friendly formats 
+library(tidyverse) 
+library(tidytext) #text data management and analysis
+library(ggplot2) #plot word frequencies and publication dates
+```
+
+```{r}
+#create an object called x with the results of our query ("haaland")
+# the from JSON flatten the JSON object, then convert to a data frame
+t <- fromJSON("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=haaland&api-key=wtPFWfTfzM0oNHD8wNoIULPLsRhwXNc6", flatten = TRUE) #the string following "key=" is your API key 
+
+class(t) #what type of object is x?
+
+t <- t %>% 
+  data.frame()
+
+
+#Inspect our data
+class(t) #now what is it?
+dim(t) # how big is it?
+names(t) # what variables are we working with?
+#t <- readRDS("nytDat.rds") #in case of API emergency :)
+```
+
+
+```{r}
+term <- "heat+wave+deaths+climate+change" # Need to use + to string together separate words
+begin_date <- "20200101"
+end_date <- "20220401"
+
+#construct the query url using API operators
+baseurl <- paste0("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=",term,
+                  "&begin_date=",begin_date,"&end_date=",end_date,
+                  "&facet_filter=true&api-key=","wtPFWfTfzM0oNHD8wNoIULPLsRhwXNc6", sep="")
+
+#examine our query url
+#this code allows for obtaining multiple pages of query results 
+ initialQuery <- fromJSON(baseurl)
+maxPages <- round((initialQuery$response$meta$hits[1] / 10)-1) 
+
+# pages <- list()
+#  for(i in 0:maxPages){
+#    nytSearch <- fromJSON(paste0(baseurl, "&page=", i), flatten = TRUE) %>% data.frame() 
+#    message("Retrieving page ", i)
+#    pages[[i+1]] <- nytSearch 
+#    Sys.sleep(6) 
+#   }
+```
+
+
+```{r}
+#need to bind the pages and create a tibble from nytDa
+#nytDat <- rbind_pages(pages) 
+```
+
+
+```{r}
+#nytDat <- nytDat %>% 
+#  data.frame()
+
+#save(nytDat, file = "nytDat.RData")
+
+load("nytDat.RData")
+
+
+nytDat %>% 
+  group_by(response.docs.type_of_material) %>%
+  summarize(count=n()) %>%
+  mutate(percent = (count / sum(count))*100) %>%
+  ggplot() +
+  geom_bar(aes(y=percent, x=response.docs.type_of_material, fill=response.docs.type_of_material), stat = "identity") + coord_flip()
+```
+
+```{r}
+nytDat %>%
+  mutate(pubDay=gsub("T.*","",response.docs.pub_date)) %>%
+  group_by(pubDay) %>%
+  summarise(count=n()) %>%
+  filter(count >= 3) %>%
+  ggplot() +
+  geom_bar(aes(x=reorder(pubDay, count), y=count), stat="identity") + coord_flip()
+```
+
+```{r}
+names(nytDat)
+```
+
+```{r}
+paragraph <- names(nytDat)[6] #The 6th column, "response.doc.lead_paragraph", is the one we want here.  
+tokenized_para <- nytDat %>%
+  unnest_tokens(word, paragraph)
+```
+
+
+```{r}
+data(stop_words)
+
+tokenized_para <- tokenized_para %>%
+  anti_join(stop_words)
+
+tokenized_para %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+```{r}
+#inspect the list of tokens (words)
+#tokenized$word
+
+clean_tokens <- str_remove_all(tokenized_para$word, "[:digit:]") #remove all numbers
+clean_tokens <- str_remove_all(clean_tokens, "people")
+clean_tokens <- str_remove_all(clean_tokens, "here")
+clean_tokens <- str_remove_all(clean_tokens, "week")
+clean_tokens <- gsub("’s", "", clean_tokens)
+
+tokenized_para$clean <- clean_tokens
+
+#tokenized_para$clean 
+
+#remove the empty strings
+tib <-subset(tokenized_para, clean!="")
+
+#reassign
+tokenized_para <- tib
+
+#try again
+tokenized_para %>%
+  count(clean, sort = TRUE) %>%
+  filter(n > 20) %>% 
+  mutate(clean = reorder(clean, n)) %>%
+  ggplot(aes(n, clean)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+```{r}
+headline <- names(nytDat)[21] #The 6th column, "response.doc.headline.main", is the one we want here.  
+tokenized_hd <- nytDat %>%
+  unnest_tokens(word, headline)
+
+tokenized_hd <- tokenized_hd %>%
+  anti_join(stop_words)
+
+#inspect the list of tokens (words)
+#tokenized$word
+days.of.week <- weekdays(Sys.Date()+0:6)
+
+clean_tokens <- str_remove_all(tokenized_hd$word, "[:digit:]") #remove all numbers
+clean_tokens <- str_remove_all(clean_tokens, "people")
+clean_tokens <- str_remove_all(clean_tokens, "here")
+clean_tokens <- str_remove_all(clean_tokens, "week")
+for (day in days.of.week){
+  clean_tokens <- str_remove_all(clean_tokens, day)
+  clean_tokens <- str_remove_all(clean_tokens, tolower(day))
+}
+
+clean_tokens <- gsub("’s", "", clean_tokens)
+
+tokenized_hd$clean <- clean_tokens
+
+#tokenized_hd$clean 
+
+#remove the empty strings
+tib <-subset(tokenized_hd, clean!="")
+
+#reassign
+tokenized_hd <- tib
+
+#try again
+tokenized_hd %>%
+  count(clean, sort = TRUE) %>%
+  filter(n > 10) %>% 
+  mutate(clean = reorder(clean, n)) %>%
+  ggplot(aes(n, clean)) +
+  geom_col() +
+  labs(y = NULL)
+```
+The comparison of distributions of word frequencies between the first paragraph and headlines had some key similarities but also had noticeable differences. However, it was important and interesting to see that the headlines contain more time-sensitive words such the time of the day, day of the week and season. This required some extra filtering for weekdays to extract a more meaningful word frequency distribution. It was interesting to see that first paragraph distribution contained more larger picture terms and concepts such as president, biden, washington and global. 
